@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: discord-message-scheduler
+    restart: unless-stopped
+
+    # Environment variables (can also use .env file)
+    environment:
+      # Discord Configuration
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID:-}
+
+      # Appwrite Configuration
+      - APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT}
+      - APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID}
+      - APPWRITE_API_KEY=${APPWRITE_API_KEY}
+      - APPWRITE_DATABASE_ID=${APPWRITE_DATABASE_ID:-discord_scheduler_db}
+
+      # Bot Configuration
+      - SCHEDULER_CHECK_INTERVAL=${SCHEDULER_CHECK_INTERVAL:-60}
+      - MAX_RETRY_ATTEMPTS=${MAX_RETRY_ATTEMPTS:-3}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    # Alternatively, use env_file
+    # env_file:
+    #   - .env
+
+    # Volume for persistent logs
+    volumes:
+      - ./logs:/app/logs
+      - ./bot.log:/app/bot.log
+
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # Health check
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/app/bot.log']
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Logging configuration
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+# Optional: Network configuration
+networks:
+  default:
+    name: discord-bot-network
+

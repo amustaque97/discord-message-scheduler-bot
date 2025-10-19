@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""
+Appwrite Database Setup Script
+
+This script initializes the Appwrite database with the required collections
+and attributes for the Discord Message Scheduler bot.
+
+Usage:
+    python setup_appwrite.py
+
+Environment Variables Required:
+    - APPWRITE_ENDPOINT: Your Appwrite server endpoint
+    - APPWRITE_PROJECT_ID: Your Appwrite project ID
+    - APPWRITE_API_KEY: Your Appwrite API key with appropriate permissions
+"""
+
+import os
+import sys
+import traceback
+from appwrite.client import Client
+from appwrite.services.databases import Databases
+from appwrite.exception import AppwriteException
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
+# Constants
+DATABASE_ID = "discord_scheduler_db"
+COLLECTIONS = {
+    "scheduled_messages": {
+        "name": "Scheduled Messages",
+        "attributes": [
+            {"key": "discord_user_id", "type": "string", "size": 255, "required": True},
+            {"key": "target_type", "type": "string", "size": 50, "required": True},
+            {"key": "target_id", "type": "string", "size": 255, "required": True},
+            {"key": "message_content", "type": "string", "size": 4000, "required": True},
+            {"key": "scheduled_time", "type": "datetime", "required": True},
+            {"key": "status", "type": "string", "size": 50, "required": True, "default": "pending"},
+            {"key": "created_at", "type": "datetime", "required": True},
+            {"key": "executed_at", "type": "datetime", "required": False},
+            {"key": "error_message", "type": "string", "size": 1000, "required": False},
+            {"key": "retry_count", "type": "integer", "required": True, "default": 0, "min": 0, "max": 5},
+            {"key": "guild_id", "type": "string", "size": 255, "required": False},
+            {"key": "thread_id", "type": "string", "size": 255, "required": False},
+        ],
+        "indexes": [
+            {"key": "idx_status", "type": "key", "attributes": ["status"]},
+            {"key": "idx_scheduled_time", "type": "key", "attributes": ["scheduled_time"]},
+            {"key": "idx_discord_user_id", "type": "key", "attributes": ["discord_user_id"]},
+            {"key": "idx_status_scheduled_time", "type": "key", "attributes": ["status", "scheduled_time"]},
+        ]
+    },
+    "user_preferences": {
+        "name": "User Preferences",
+        "attributes": [
+            {"key": "discord_user_id", "type": "string", "size": 255, "required": True},
+            {"key": "timezone", "type": "string", "size": 100, "required": True, "default": "UTC"},
+            {"key": "max_scheduled_messages", "type": "integer", "required": True, "default": 10, "min": 1, "max": 50},
+            {"key": "notification_enabled", "type": "boolean", "required": True, "default": True},
+            {"key": "created_at", "type": "datetime", "required": True},
+            {"key": "updated_at", "type": "datetime", "required": True},
+        ],
+        "indexes": [
+            {"key": "idx_discord_user_id", "type": "unique", "attributes": ["discord_user_id"]},
+        ]
+    },
+    "execution_logs": {
+        "name": "Execution Logs",
+        "attributes": [
+            {"key": "scheduled_message_id", "type": "string", "size": 255, "required": True},
+            {"key": "discord_user_id", "type": "string", "size": 255, "required": True},
+            {"key": "execution_time", "type": "datetime", "required": True},
+            {"key": "status", "type": "string", "size": 50, "required": True},
+            {"key": "error_message", "type": "string", "size": 2000, "required": False},
+            {"key": "target_type", "type": "string", "size": 50, "required": True},
+            {"key": "target_id", "type": "string", "size": 255, "required": True},
+            {"key": "message_preview", "type": "string", "size": 200, "required": False},
+        ],
+        "indexes": [
+            {"key": "idx_scheduled_message_id", "type": "key", "attributes": ["scheduled_message_id"]},
+            {"key": "idx_discord_user_id", "type": "key", "attributes": ["discord_user_id"]},
+            {"key": "idx_execution_time", "type": "key", "attributes": ["execution_time"]},
+        ]
+    }
+}
+
+
+def get_client():
+    """Initialize and return Appwrite client."""
+    endpoint = os.getenv("APPWRITE_ENDPOINT")
+    project_id = os.getenv("APPWRITE_PROJECT_ID")
+    api_key = os.getenv("APPWRITE_API_KEY")
+
+    if not all([endpoint, project_id, api_key]):
+        print("❌ Error: Missing required environment variables")
+        print("   Required: APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_API_KEY")
+        sys.exit(1)
+
+    client = Client()
+    client.set_endpoint(endpoint)
+    client.set_project(project_id)
+    client.set_key(api_key)
+
+    return client
+
+
+def create_database(databases):
+    """Create the main database if it doesn't exist."""
+    try:
+        databases.get(DATABASE_ID)
+        print(f"✅ Database '{DATABASE_ID}' already exists")
+        return True
+    except AppwriteException as e:
+        # TODO(mustaq): first mistake
+        if e.code == 404 or e.code == 400:
+            try:
+                databases.create(
+                    database_id=DATABASE_ID,
+                    name="Discord Scheduler Database"
+                )
+                print(f"✅ Created database '{DATABASE_ID}'")
+                return True
+            except AppwriteException as create_error:
+                print(traceback.format_exc())
+                print(f"❌ Error creating database: {create_error.message}")
+                return False
+        else:
+            print(f"❌ Error checking database: {e.message}")
+            return False
+
+
+def create_collection(databases, collection_id, collection_data):
+    """Create a collection with its attributes and indexes."""
+    try:
+        # Check if collection exists
+        databases.get_collection(DATABASE_ID, collection_id)
+        print(f"✅ Collection '{collection_id}' already exists")
+        return True
+    except AppwriteException as e:
+        if e.code == 404:
+            # Create collection
+            try:
+                databases.create_collection(
+                    database_id=DATABASE_ID,
+                    collection_id=collection_id,
+                    name=collection_data["name"],
+                    document_security=True
+                )
+                print(f"✅ Created collection '{collection_id}'")
+            except AppwriteException as create_error:
+                print(f"❌ Error creating collection '{collection_id}': {create_error.message}")
+                return False
+
+            # Create attributes
+            for attr in collection_data["attributes"]:
+                try:
+                    attr_key = attr["key"]
+                    attr_type = attr["type"]
+                    
+                    if attr_type == "string":
+                        databases.create_string_attribute(
+                            database_id=DATABASE_ID,
+                            collection_id=collection_id,
+                            key=attr_key,
+                            size=attr["size"],
+                            required=attr["required"],
+                            default=attr.get("default")
+                        )
+                    elif attr_type == "integer":
+                        databases.create_integer_attribute(
+                            database_id=DATABASE_ID,
+                            collection_id=collection_id,
+                            key=attr_key,
+                            required=attr["required"],
+                            min=attr.get("min"),
+                            max=attr.get("max"),
+                            default=attr.get("default")
+                        )
+                    elif attr_type == "boolean":
+                        databases.create_boolean_attribute(
+                            database_id=DATABASE_ID,
+                            collection_id=collection_id,
+                            key=attr_key,
+                            required=attr["required"],
+                            default=attr.get("default")
+                        )
+                    elif attr_type == "datetime":
+                        databases.create_datetime_attribute(
+                            database_id=DATABASE_ID,
+                            collection_id=collection_id,
+                            key=attr_key,
+                            required=attr["required"],
+                            default=attr.get("default")
+                        )
+                    
+                    print(f"  ✅ Created attribute '{attr_key}'")
+                except AppwriteException as attr_error:
+                    print(f"  ⚠️  Error creating attribute '{attr_key}': {attr_error.message}")
+
+            # Wait for attributes to be available
+            print(f"  ⏳ Waiting for attributes to be ready...")
+            import time
+            time.sleep(2)
+
+            # Create indexes
+            for index in collection_data["indexes"]:
+                try:
+                    databases.create_index(
+                        database_id=DATABASE_ID,
+                        collection_id=collection_id,
+                        key=index["key"],
+                        type=index["type"],
+                        attributes=index["attributes"],
+                        orders=["ASC"] * len(index["attributes"])
+                    )
+                    print(f"  ✅ Created index '{index['key']}'")
+                except AppwriteException as index_error:
+                    print(f"  ⚠️  Error creating index '{index['key']}': {index_error.message}")
+
+            return True
+        else:
+            print(f"❌ Error checking collection '{collection_id}': {e.message}")
+            return False
+
+
+def main():
+    """Main setup function."""
+    print("\n🚀 Discord Message Scheduler - Appwrite Setup")
+    print("=" * 50)
+    
+    # Initialize client
+    print("\n📡 Connecting to Appwrite...")
+    client = get_client()
+    databases = Databases(client)
+    
+    # Create database
+    print(f"\n📁 Setting up database...")
+    if not create_database(databases):
+        sys.exit(1)
+    
+    # Create collections
+    print(f"\n📦 Creating collections...")
+    for collection_id, collection_data in COLLECTIONS.items():
+        print(f"\n  Collection: {collection_id}")
+        if not create_collection(databases, collection_id, collection_data):
+            print(f"  ⚠️  Warning: Collection '{collection_id}' setup incomplete")
+    
+    print("\n" + "=" * 50)
+    print("✅ Setup completed successfully!")
+    print("\n📝 Next steps:")
+    print("  1. Configure your Discord bot token in .env file")
+    print("  2. Update APPWRITE_DATABASE_ID in your bot configuration")
+    print("  3. Run the bot: python bot.py")
+    print()
+
+
+if __name__ == "__main__":
+    main()
+

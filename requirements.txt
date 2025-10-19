@@ -1,0 +1,14 @@
+# Discord Bot
+discord.py==2.6.4
+python-dotenv==1.0.1
+
+# Appwrite SDK
+appwrite==13.4.1
+
+# Scheduling
+APScheduler==3.10.4
+
+# Utilities
+python-dateutil==2.9.0
+pytz==2024.2
+
